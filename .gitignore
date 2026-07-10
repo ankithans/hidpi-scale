@@ -1,0 +1,8 @@
+vdisplay
+mirror
+lsmon
+*.log
+size.pref
+local.conf
+node_modules/
+.DS_Store

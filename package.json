@@ -1,0 +1,17 @@
+{
+  "name": "hidpi-scale",
+  "version": "1.0.0",
+  "description": "Free flexible HiDPI scaling for external monitors on Apple-silicon Macs",
+  "bin": {
+    "hidpi-scale": "./cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ankithans/hidpi-scale.git"
+  },
+  "os": ["darwin"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.7"
+  }
+}

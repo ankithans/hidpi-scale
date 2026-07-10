@@ -1,0 +1,4 @@
+# Optional: pin specific monitor units to sides (UUIDs from ./lsmon)
+# Copy to local.conf and fill in.
+RIGHT_DELL=""
+LEFT_DELL=""
