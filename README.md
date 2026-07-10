@@ -8,6 +8,11 @@ Settings. Apps like BetterDisplay fix this behind a paid "flexible scaling"
 feature. hidpi-scale does the same thing for free: pick a scale step and get
 smaller UI and more screen space on the monitors you choose.
 
+Here it is running on a 1080p DELL P2422H — macOS happily offering
+2304×1296 and 2560×1440:
+
+![System Settings showing scaled resolutions on a 1080p monitor](docs/settings.png)
+
 ## Setup
 
 Requires macOS on Apple silicon, [Homebrew](https://brew.sh), and Xcode Command
