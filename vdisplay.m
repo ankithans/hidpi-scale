@@ -101,17 +101,20 @@ static NSSet *monitoredSet(void) {
 
 static NSSet *lastApplied = nil;
 static dispatch_block_t pendingApply = nil;
+static void ensureVirtualCount(NSUInteger want);
 
 static void applyIfMonitorSetChanged(void) {
     NSSet *now = monitoredSet();
     if ([now isEqualToSet:lastApplied]) return;
     lastApplied = now;
-    if (now.count == 0) return;
-    printf("monitored set changed (%lu connected), applying scale\n",
-           (unsigned long)now.count);
+    printf("monitored set changed (%lu connected)\n", (unsigned long)now.count);
+    ensureVirtualCount(MIN(now.count, (NSUInteger)2));
     fflush(stdout);
+    if (now.count == 0) return;
+    // sleep lets the just-created virtual displays finish registering
     NSString *cmd = [NSString stringWithFormat:
-        @"'%@/set-scale.sh' >> '%@/autoscale.log' 2>&1 &", baseDir(), baseDir()];
+        @"{ sleep 2; '%@/set-scale.sh'; } >> '%@/autoscale.log' 2>&1 &",
+        baseDir(), baseDir()];
     system(cmd.UTF8String);
 }
 
@@ -151,6 +154,37 @@ static NSArray *buildModes(unsigned *maxW, unsigned *maxH) {
     return modes;
 }
 
+static NSMutableArray *displays = nil;
+static CGVirtualDisplay *makeDisplay(NSString *name, unsigned int serial,
+                                     NSArray *modes, unsigned maxW, unsigned maxH);
+static NSArray *buildModes(unsigned *maxW, unsigned *maxH);
+
+// Keep exactly `want` virtual displays alive. Releasing a CGVirtualDisplay
+// destroys it, so virtuals exist only while matched monitors are connected.
+static void ensureVirtualCount(NSUInteger want) {
+    while (displays.count > want) {
+        [displays removeLastObject];
+        printf("virtual display %lu removed\n", (unsigned long)displays.count + 1);
+    }
+    if (displays.count >= want) return;
+    unsigned maxW, maxH;
+    NSArray *modes = buildModes(&maxW, &maxH);
+    NSArray *names = @[ @"HiDPI Scale", @"HiDPI Scale 2" ];
+    while (displays.count < want) {
+        NSUInteger i = displays.count;
+        CGVirtualDisplay *d = makeDisplay(names[i], (unsigned int)i + 1,
+                                          modes, maxW, maxH);
+        if (!d) {
+            fprintf(stderr, "Failed to create virtual display %s\n",
+                    [names[i] UTF8String]);
+            return;
+        }
+        [displays addObject:d];
+        printf("Virtual display \"%s\" up, displayID=%u\n",
+               [names[i] UTF8String], d.displayID);
+    }
+}
+
 static CGVirtualDisplay *makeDisplay(NSString *name, unsigned int serial,
                                      NSArray *modes, unsigned maxW, unsigned maxH) {
     CGVirtualDisplayDescriptor *desc = [[CGVirtualDisplayDescriptor alloc] init];
@@ -176,29 +210,13 @@ static CGVirtualDisplay *makeDisplay(NSString *name, unsigned int serial,
 
 int main(int argc, char **argv) {
     @autoreleasepool {
-        static NSMutableArray *displays;
         displays = [NSMutableArray array];
-
-        unsigned maxW, maxH;
-        NSArray *modes = buildModes(&maxW, &maxH);
-
-        NSArray *names = @[ @"HiDPI Scale", @"HiDPI Scale 2" ];
-        for (unsigned int i = 0; i < names.count; i++) {
-            CGVirtualDisplay *d = makeDisplay(names[i], i + 1, modes, maxW, maxH);
-            if (!d) {
-                fprintf(stderr, "Failed to create virtual display %s\n",
-                        [names[i] UTF8String]);
-                return 1;
-            }
-            [displays addObject:d];
-            printf("Virtual display \"%s\" up, displayID=%u\n",
-                   [names[i] UTF8String], d.displayID);
-        }
+        printf("hidpi-scale daemon started (virtual displays created on demand)\n");
         fflush(stdout);
 
-        // Auto-apply scaling when monitored monitors are (dis)connected
+        // Create/destroy virtuals and apply scaling on monitor (dis)connect
         CGDisplayRegisterReconfigurationCallback(reconfigCallback, NULL);
-        // Initial apply shortly after login/startup, once displays settle
+        // Initial check shortly after login/startup, once displays settle
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
                        dispatch_get_main_queue(),
                        ^{ applyIfMonitorSetChanged(); });

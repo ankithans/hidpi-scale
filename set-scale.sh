@@ -44,13 +44,14 @@ calc_res() {  # $1 = panel WxH  → echoes "W H"
   echo "$w $h"
 }
 
-# Our virtual displays (created by the vdisplay daemon)
+# Our virtual displays: the daemon creates one per connected matched monitor
+# (and none while no matched monitor is attached)
 VIRTS=("${(@f)$(./lsmon -virtual)}"); VIRTS=(${VIRTS:#})
-if (( ${#VIRTS} < 2 )); then
+if (( ${#VIRTS} == 0 )); then
   echo "virtual displays not found — is the vdisplay daemon running? (see install.sh)"
   exit 1
 fi
-VIRT1="${VIRTS[1]}"; VIRT2="${VIRTS[2]}"
+VIRT1="${VIRTS[1]}"; VIRT2="${VIRTS[2]:-}"
 
 # Connected matched monitors ("UUID WxH" per line)
 typeset -A PANEL_OF
@@ -90,10 +91,10 @@ fi
 
 # 1. Break all mirroring so groups can't merge wrongly
 for d in "${MONS[@]}"; do ./mirror "$d" off >/dev/null 2>&1; done
-./mirror "$VIRT2" off >/dev/null 2>&1
+[[ -n "$VIRT2" ]] && ./mirror "$VIRT2" off >/dev/null 2>&1
 sleep 1
 
-if (( ${#MONS} >= 2 )); then
+if (( ${#MONS} >= 2 && ${#VIRTS} >= 2 )); then
   # Two monitors: MONS[1]+VIRT1 right of built-in, MONS[2]+VIRT2 left
   R=(${=$(calc_res "$PANEL_OF[${MONS[1]}]")})
   L=(${=$(calc_res "$PANEL_OF[${MONS[2]}]")})
@@ -107,16 +108,20 @@ if (( ${#MONS} >= 2 )); then
   ./mirror "${MONS[2]}" "$VIRT2" >/dev/null && ./mirror "${MONS[1]}" "$VIRT1" >/dev/null \
     && echo "Both monitors scaled: right looks like ${R[1]}x${R[2]}, left ${L[1]}x${L[2]}"
 else
-  # One monitor: monitor+VIRT1; VIRT2 parked into the same mirror set so no
-  # invisible orphan desktop is left where windows could get lost
+  # One monitor (or one virtual so far): monitor+VIRT1. If a spare second
+  # virtual exists during a transition, park it into the same mirror set so
+  # no invisible orphan desktop is left where windows could get lost.
   R=(${=$(calc_res "$PANEL_OF[${MONS[1]}]")})
   PW="${PANEL_OF[${MONS[1]}]%x*}"
+  SPARE=()
+  [[ -n "$VIRT2" ]] && SPARE=("id:$VIRT2 res:${R[1]}x${R[2]} hz:60 scaling:on origin:($RIGHT_X,${R[2]}) degree:0")
   displayplacer "${ARGS[@]}" \
     "id:$VIRT1 res:${R[1]}x${R[2]} hz:60 scaling:on origin:($RIGHT_X,0) degree:0" \
-    "id:$VIRT2 res:${R[1]}x${R[2]} hz:60 scaling:on origin:($RIGHT_X,${R[2]}) degree:0" \
+    "${SPARE[@]}" \
     "id:${MONS[1]} res:$PANEL_OF[${MONS[1]}] hz:60 scaling:on origin:(-$PW,0) degree:0" \
     >/dev/null
   sleep 1
-  ./mirror "${MONS[1]}" "$VIRT1" >/dev/null && ./mirror "$VIRT2" "$VIRT1" >/dev/null \
-    && echo "Monitor scaled: looks like ${R[1]}x${R[2]} (spare virtual parked)"
+  ./mirror "${MONS[1]}" "$VIRT1" >/dev/null \
+    && { [[ -z "$VIRT2" ]] || ./mirror "$VIRT2" "$VIRT1" >/dev/null } \
+    && echo "Monitor scaled: looks like ${R[1]}x${R[2]}"
 fi
