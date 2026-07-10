@@ -121,7 +121,10 @@ static void applyIfMonitorSetChanged(void) {
 static void reconfigCallback(CGDirectDisplayID display,
                              CGDisplayChangeSummaryFlags flags,
                              void *userInfo) {
-    if (!(flags & (kCGDisplayAddFlag | kCGDisplayRemoveFlag))) return;
+    // React to any completed reconfiguration: unplugging a hardware-mirror
+    // slave doesn't reliably raise Add/Remove flags. The monitored-set
+    // comparison in applyIfMonitorSetChanged makes spurious wakeups no-ops.
+    if (flags & kCGDisplayBeginConfigurationFlag) return;
     // Debounce: hotplug fires a burst of callbacks; act 3s after the last one
     if (pendingApply) dispatch_block_cancel(pendingApply);
     pendingApply = dispatch_block_create(0, ^{ applyIfMonitorSetChanged(); });
