@@ -11,7 +11,7 @@ smaller UI and more screen space on the monitors you choose.
 Here it is running on a 1080p DELL P2422H — macOS happily offering
 2304×1296 and 2560×1440:
 
-![System Settings showing scaled resolutions on a 1080p monitor](docs/settings.png)
+<img src="docs/settings.png" alt="System Settings showing scaled resolutions on a 1080p monitor" width="480">
 
 ## Setup
 
