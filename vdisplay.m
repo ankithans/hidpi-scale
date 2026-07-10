@@ -3,12 +3,22 @@
 // Mirror a physical monitor to a virtual display to get "looks like"
 // resolutions beyond the panel's native mode (the old BetterDummy trick).
 //
-// Build: clang -fobjc-arc -framework Foundation -framework CoreGraphics -o vdisplay vdisplay.m
+// Build: clang -fobjc-arc -framework Foundation -framework CoreGraphics -framework IOKit -o vdisplay vdisplay.m
 // Run:   ./vdisplay   (keeps running; the displays exist while the process lives)
 
 #import <Foundation/Foundation.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <IOKit/IOKitLib.h>
 #include <mach-o/dyld.h>
+
+// Private IOKit AV functions (same interface m1ddc/BetterDisplay use) — the
+// only reliable way to see physical connection state: a monitor that is a
+// hardware-mirror slave stays "online" in CoreGraphics after unplug and
+// fires no reconfiguration events.
+typedef CFTypeRef IOAVServiceRef;
+extern IOAVServiceRef IOAVServiceCreateWithService(CFAllocatorRef allocator,
+                                                   io_service_t service);
+extern IOReturn IOAVServiceCopyEDID(IOAVServiceRef service, CFDataRef *data);
 
 // Private CoreGraphics classes (same API used by BetterDummy/DeskPad/FluffyDisplay)
 @interface CGVirtualDisplaySettings : NSObject
@@ -79,23 +89,49 @@ static int loadModels(ModelEntry *out, int max) {
     return n;
 }
 
-// Set of currently online displayIDs matching models.conf (never our virtuals)
+// Set of PHYSICALLY connected monitors matching models.conf, keyed by IOKit
+// registry entry id. Reads live EDID per external port — ground truth that,
+// unlike the CoreGraphics display list, drops unplugged mirror slaves.
 static NSSet *monitoredSet(void) {
     ModelEntry models[32];
     int nModels = loadModels(models, 32);
-    CGDirectDisplayID ids[16];
-    uint32_t count = 0;
-    CGGetOnlineDisplayList(16, ids, &count);
     NSMutableSet *set = [NSMutableSet set];
-    for (uint32_t i = 0; i < count; i++) {
-        for (int m = 0; m < nModels; m++) {
-            if (CGDisplayVendorNumber(ids[i]) == models[m].vendor &&
-                CGDisplayModelNumber(ids[i]) == models[m].model) {
-                [set addObject:@(ids[i])];
-                break;
+    io_iterator_t iter;
+    if (IOServiceGetMatchingServices(kIOMainPortDefault,
+            IOServiceMatching("DCPAVServiceProxy"), &iter) != KERN_SUCCESS)
+        return set;
+    io_service_t svc;
+    while ((svc = IOIteratorNext(iter))) {
+        CFTypeRef loc = IORegistryEntryCreateCFProperty(svc, CFSTR("Location"),
+                                                        kCFAllocatorDefault, 0);
+        BOOL external = loc && CFGetTypeID(loc) == CFStringGetTypeID() &&
+            CFStringCompare(loc, CFSTR("External"), 0) == kCFCompareEqualTo;
+        if (loc) CFRelease(loc);
+        if (external) {
+            IOAVServiceRef av = IOAVServiceCreateWithService(kCFAllocatorDefault, svc);
+            if (av) {
+                CFDataRef edid = NULL;
+                if (IOAVServiceCopyEDID(av, &edid) == KERN_SUCCESS &&
+                    edid && CFDataGetLength(edid) >= 12) {
+                    const UInt8 *b = CFDataGetBytePtr(edid);
+                    uint32_t vendor = (b[8] << 8) | b[9];
+                    uint32_t product = (b[11] << 8) | b[10];
+                    for (int m = 0; m < nModels; m++) {
+                        if (models[m].vendor == vendor && models[m].model == product) {
+                            uint64_t rid = 0;
+                            IORegistryEntryGetRegistryEntryID(svc, &rid);
+                            [set addObject:@(rid)];
+                            break;
+                        }
+                    }
+                }
+                if (edid) CFRelease(edid);
+                CFRelease(av);
             }
         }
+        IOObjectRelease(svc);
     }
+    IOObjectRelease(iter);
     return set;
 }
 
@@ -217,12 +253,18 @@ int main(int argc, char **argv) {
         printf("hidpi-scale daemon started (virtual displays created on demand)\n");
         fflush(stdout);
 
-        // Create/destroy virtuals and apply scaling on monitor (dis)connect
+        // Create/destroy virtuals and apply scaling on monitor (dis)connect.
+        // CG events catch plugs quickly...
         CGDisplayRegisterReconfigurationCallback(reconfigCallback, NULL);
-        // Initial check shortly after login/startup, once displays settle
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
-                       dispatch_get_main_queue(),
-                       ^{ applyIfMonitorSetChanged(); });
+        // ...but unplugging a hardware-mirror slave fires NO CG events, so
+        // poll physical connection state (live EDID) every 5 seconds too.
+        dispatch_source_t poll = dispatch_source_create(
+            DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(poll,
+            dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC),
+            5 * NSEC_PER_SEC, NSEC_PER_SEC);
+        dispatch_source_set_event_handler(poll, ^{ applyIfMonitorSetChanged(); });
+        dispatch_resume(poll);
 
         dispatch_main();
     }

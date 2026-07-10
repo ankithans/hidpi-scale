@@ -14,7 +14,7 @@ if ! command -v displayplacer >/dev/null 2>&1; then
 fi
 
 echo "Building..."
-clang -fobjc-arc -framework Foundation -framework CoreGraphics -o vdisplay vdisplay.m
+clang -fobjc-arc -framework Foundation -framework CoreGraphics -framework IOKit -o vdisplay vdisplay.m
 clang -fobjc-arc -framework Foundation -framework CoreGraphics -framework ColorSync -o mirror mirror.m
 clang -fobjc-arc -framework Foundation -framework CoreGraphics -framework ColorSync -o lsmon lsmon.m
 chmod +x set-scale.sh uninstall.sh
