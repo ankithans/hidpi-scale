@@ -18,7 +18,14 @@ console.log(`Installing to ${dest} ...`);
 fs.mkdirSync(dest, { recursive: true });
 fs.cpSync(src, dest, {
   recursive: true,
-  filter: (p) => !p.includes("node_modules") && !p.includes(path.sep + ".git"),
+  // Filter on the path relative to the package root: the npx cache path
+  // itself contains "node_modules", so testing the absolute path drops all.
+  filter: (p) => {
+    const rel = path.relative(src, p);
+    return !rel
+      .split(path.sep)
+      .some((part) => part === "node_modules" || part === ".git");
+  },
 });
 
 execSync(`zsh "${path.join(dest, "install.sh")}"`, { stdio: "inherit" });
